@@ -9,9 +9,6 @@ import numpy as np
 from torch.nn.utils.rnn import pad_sequence
 import pickle
 
-# FRAME_DIR = '../PPO-PyTorch/metaworld-dataset/'
-# OUTPUT_DIR = '../PPO-PyTorch/metaworld-dataset/processed-frames'
-# OUTPUT_DIR2 = '../PPO-PyTorch/metaworld-dataset-bad/processed-frames'
 DATA_DIR = '../../data/'
 FRAMES_DIR = '../../data/frames/'
 ENVS_DIR = '../../data/envs/'
@@ -38,13 +35,11 @@ class PadBatch:
         labels_batch, obj_batch, env_batch, weight_batch
 
 class Data(Dataset):
-  def __init__(self, mode, sampling, prefix, repeat=10):
+  def __init__(self, mode, sampling, prefix, repeat=1):
     self.sampling = sampling
     self.prefix = prefix
     self.vocab = pickle.load(open('{}/vocab_train.pkl'.format(DATA_DIR), 'rb'))
     self.descriptions = self.load_descriptions(mode)
-    # import pdb
-    # pdb.set_trace()
     if mode == 'train':
       self.video_ids = list(range(80))
       self.video_ids.remove(50)
@@ -77,10 +72,7 @@ class Data(Dataset):
         except ValueError:
             t = self.vocab.index('<unk>')
         result.append(t)
-    # import pdb
-    # pdb.set_trace()
     return torch.Tensor(result)
-    # return torch.from_numpy(np.array([self.vocab.index(word) for word in descr.split()]))
 
   def load_descriptions(self, mode):
     descriptions = pickle.load(open('{}/{}_descr.pkl'.format(DATA_DIR, mode), 'rb'))
@@ -89,29 +81,11 @@ class Data(Dataset):
         descr_list = descriptions[i]
         result[i] = [(d, self.encode_description(d)) for d in descr_list]
     return result
-    '''
-    result = {}
-    filename = '{}.txt'.format(mode)
-    with open(filename) as f:
-      for line in f.readlines():
-        line = line.strip()
-        vidid, _, descr = line.split('\t')
-        descr = descr.translate(translator).lower()
-        descr_enc = self.encode_description(descr)
-        vidid = eval(vidid)
-        if vidid in result:
-          descr_list = result[vidid]
-        else:
-          descr_list = []
-        result[vidid] = descr_list + [(descr, descr_enc)]
-    return result
-    '''
 
   def load_env_objects(self, obj, env):
     result = []
     with open('{}/obj{}-env{}.txt'.format(ENVS_DIR, obj, env)) as f:
       for line in f.readlines():
-        # line = line.strip()
         line = line.replace('(', '').replace(',', '').replace(')', '')
         parts = line.split()
         x = eval(parts[0])
@@ -135,56 +109,35 @@ class Data(Dataset):
     frames_left = torch.from_numpy(torch.load(open('{}/obj{}-env{}-left-50x50.pt'.format(FRAMES_DIR, obj, env), 'rb')))
     frames_center = torch.from_numpy(torch.load(open('{}/obj{}-env{}-center-50x50.pt'.format(FRAMES_DIR, obj, env), 'rb')))
 
-    if self.prefix:
-      lower = max(1, self.len_frac * (len(frames_right)+1) - 1)
-      t = np.random.randint(lower, (len(frames_right)+1))
-      weight = (t / len(frames_right))**1
-      frames_right = frames_right[:t]
-      frames_left = frames_left[:t]
-      frames_center = frames_center[:t]
-    else:
-      weight = 1.
+    lower = max(1, self.len_frac * (len(frames_right)+1) - 1)
+    t = np.random.randint(lower, (len(frames_right)+1))
+    weight = (t / len(frames_right))**1
+    frames_right = frames_right[:t]
+    frames_left = frames_left[:t]
+    frames_center = frames_center[:t]
 
-    if self.sampling == 'fixed':
-      frames_right = frames_right[::10]
-      frames_left = frames_left[::10]
-      frames_center = frames_center[::10]
-      selected = []
-    elif self.sampling == 'random':
-      while True:
-        selected = np.random.random(len(frames_right)) > 0.9
-        if np.sum(selected) > 0:
-          break
-      frames_right = frames_right[selected]
-      frames_left = frames_left[selected]
-      frames_center = frames_center[selected]
-    elif self.sampling == 'none':
-      pass
-    else:
-      raise NotImplementedError('Invalid sampling type')
+    while True:
+      selected = np.random.random(len(frames_right)) > 0.9
+      if np.sum(selected) > 0:
+        break
+    frames_right = frames_right[selected]
+    frames_left = frames_left[selected]
+    frames_center = frames_center[selected]
       
     if label == 1:
       t = np.random.randint(0, len(self.descriptions[obj]))
       descr, descr_enc = self.descriptions[obj][t]
     else:
       tt = np.random.random()
-      if tt < self.thresh:
-        # alternate traj
-        frames = torch.from_numpy(torch.load(open('{}/obj{}-env{}-50x50.pt'.format(OUTPUT_DIR2, obj, env), 'rb')))
-        t = np.random.randint(1, len(frames)+1)
-        frames = frames[:t:2]
-        t = np.random.randint(0, len(self.descriptions[obj]))
-        descr, descr_enc = self.descriptions[obj][t]
-      else:
-        # alternate lang
-        alt_obj = env_objects[1:]
-        # alt_obj = list(filter(lambda xyo: abs(env_objects[0][0] - xyo[0]) >= 2, env_objects))
-        # alt_obj = list(map(lambda xyo: xyo[-1], alt_obj))
-        if len(alt_obj) == 0:
-          alt_obj = list(range(0,obj)) + list(range(obj+1,self.N_OBJ))
-        obj_ = np.random.choice(alt_obj)
-        t = np.random.randint(0, len(self.descriptions[obj_])-1)
-        descr, descr_enc = self.descriptions[obj_][t]
+      # alternate lang
+      alt_obj = env_objects[1:]
+      # alt_obj = list(filter(lambda xyo: abs(env_objects[0][0] - xyo[0]) >= 2, env_objects))
+      # alt_obj = list(map(lambda xyo: xyo[-1], alt_obj))
+      if len(alt_obj) == 0:
+        alt_obj = list(range(0,obj)) + list(range(obj+1,self.N_OBJ))
+      obj_ = np.random.choice(alt_obj)
+      t = np.random.randint(0, len(self.descriptions[obj_])-1)
+      descr, descr_enc = self.descriptions[obj_][t]
     label = 2*label - 1
     return frames_right, frames_left, frames_center, descr, descr_enc, len(frames_right), len(descr_enc), label, obj, env, weight
 

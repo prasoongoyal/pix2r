@@ -1,4 +1,4 @@
-from data_multiview import Data, PadBatch
+from data import Data, PadBatch
 import pickle
 import torch
 import torch.nn as nn
@@ -8,7 +8,6 @@ import torch.optim as optim
 import numpy as np
 from sklearn.metrics import confusion_matrix
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-# from torch.utils.tensorboard import SummaryWriter
 from scipy.stats import spearmanr
 
 
@@ -50,24 +49,20 @@ class ImgEnc(nn.Module):
         self.args = args
 
         self.encoder = nn.Sequential(
-            # nn.BatchNorm2d(3), 
             nn.Conv2d(3, args.n_channels, 3, 1),
             nn.ReLU(),
             nn.MaxPool2d(2, 2),
 
-            # nn.BatchNorm2d(args.n_channels), 
             nn.Conv2d(args.n_channels, args.n_channels, 3, 1),
             nn.ReLU(),
             nn.MaxPool2d(2, 2),
 
-            # nn.BatchNorm2d(args.n_channels), 
             nn.Conv2d(args.n_channels, args.n_channels, 3, 1),
             nn.ReLU(),
             nn.MaxPool2d(2, 2),
 
             nn.Flatten(),
             nn.Linear(4*4*args.n_channels, args.img_enc_size),
-            # nn.Dropout(),
             nn.Linear(args.img_enc_size, args.img_enc_size),
         )
 
@@ -78,31 +73,6 @@ class Model(nn.Module):
     def __init__(self, args):
         super().__init__()
         self.args = args
-
-        '''
-        # image encoder
-        self.img_enc = nn.Sequential(
-            # nn.BatchNorm2d(3), 
-            nn.Conv2d(3, args.n_channels, 3, 1),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-
-            # nn.BatchNorm2d(args.n_channels), 
-            nn.Conv2d(args.n_channels, args.n_channels, 3, 1),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-
-            # nn.BatchNorm2d(args.n_channels), 
-            nn.Conv2d(args.n_channels, args.n_channels, 3, 1),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-
-            nn.Flatten(),
-            nn.Linear(4*4*args.n_channels, args.img_enc_size),
-            # nn.Dropout(),
-            nn.Linear(args.img_enc_size, args.img_enc_size),
-        )
-        '''
 
         self.img_enc_right = ImgEnc(args)
         self.img_enc_left = ImgEnc(args)
@@ -135,17 +105,12 @@ class Model(nn.Module):
         _, lang_enc = lstm_helper(lang_emb, lang_len, self.descr_encoder)
 
         traj_lang = torch.cat([traj_enc, lang_enc], dim=-1)
-        # traj_lang = F.dropout(traj_lang)
         pred = F.relu(self.linear1(traj_lang))
-        # pred = F.dropout(pred)
         pred = self.linear2(pred)
         return pred, lang_emb
 
 class Predict:
     def __init__(self, model_file, lr, n_updates):
-        # from argparse import Namespace
-        # args = Namespace(n_channels=64, img_enc_size=128, lang_enc_size=128, classifier_size=512, num_layers=2)
-        # args = Namespace(n_channels=512, img_enc_size=512, lang_enc_size=512, classifier_size=1024, num_layers=1)
         ckpt = torch.load(model_file)
         self.args = ckpt['args']
         self.model = Model(self.args).cuda()
@@ -275,33 +240,14 @@ class Train:
         params_lang_enc = list(self.model.embedding.parameters()) + list(self.model.descr_encoder.parameters())
         params_rest = list(filter(lambda kv: 'img_enc' not in kv[0] and 'embedding' not in kv[0] and 'descr_enc' not in kv[0], self.model.named_parameters()))
         params_rest = list(map(lambda x: x[1], params_rest))
-        self.optimizer_img_enc = optim.Adam(
-            # self.model.parameters(), 
-            params_img_enc,
-            lr=self.args.lr_img_enc, 
-            weight_decay=self.args.weight_decay)
-        self.optimizer_lang_enc = optim.Adam(
-            params_lang_enc,
-            # self.model.parameters(), 
-            lr=self.args.lr_lang_enc, 
-            weight_decay=self.args.weight_decay)
-        self.optimizer_rest = optim.Adam(
-            params_rest,
-            # self.model.parameters(), 
-            lr=self.args.lr_rest, 
-            weight_decay=self.args.weight_decay)
-
-        # tensorboard
-        if args.logdir:
-            self.writer = SummaryWriter(log_dir=args.logdir)
-            self.global_step = 0
+        self.optimizer = optim.Adam(
+            self.model.parameters(),
+            lr=self.args.lr)
 
     def run_batch(self, traj_right, traj_left, traj_center, lang, traj_len, lang_len, labels, weights, is_train):
         if is_train:
             self.model.train()
-            self.optimizer_img_enc.zero_grad()
-            self.optimizer_lang_enc.zero_grad()
-            self.optimizer_rest.zero_grad()
+            self.optimizer.zero_grad()
         else:
             self.model.eval()
 
@@ -314,27 +260,11 @@ class Train:
         pred, _ = self.model(traj_right, traj_left, traj_center, lang, traj_len, lang_len)
         prob = torch.tanh(pred[:, 0])
         loss = torch.nn.MSELoss()(prob, weights*labels)
-        '''
-        loss = torch.nn.CrossEntropyLoss(reduction='none')(prob, labels)
-        loss = torch.mean(weights * loss)
-        pred = torch.argmax(prob, dim=-1)
-        pred = torch.sign(prob)
-        '''
         pred = prob
         
         if is_train:
             loss.backward()
-            self.optimizer_img_enc.step()
-            self.optimizer_lang_enc.step()
-            self.optimizer_rest.step()
-            # tensorboard
-            if self.args.logdir:
-                self.global_step += 1
-                if self.global_step % 100 == 0:
-                    for tag, value in self.model.named_parameters():
-                        tag = tag.replace('.', '/')
-                        self.writer.add_histogram(tag, value.data.cpu().numpy(), self.global_step)
-                        self.writer.add_histogram(tag+'/grad', value.grad.data.cpu().numpy(), self.global_step)
+            self.optimizer.step()
 
         return pred, loss.item()
 
@@ -347,21 +277,15 @@ class Train:
             pred_all += pred.tolist()
             labels_all += (weights * labels).tolist()
             loss_all.append(loss)
-        # correct = [1.0 if x == y else 0.0 for (x, y) in zip(pred_all, labels_all)]
         t, p = spearmanr(pred_all, labels_all)
-        # conf_mat = confusion_matrix(labels_all, pred_all)
         return np.round(np.mean(loss_all), 2), t, None
 
     def train_model(self):
         best_val_acc = 0.
         epoch = 1
         while True:
-            # self.valid_data_loader.dataset.set_thresh(min(0.5, epoch / 100.))
-            # self.train_data_loader.dataset.set_thresh(min(0.5, epoch / 100.))
             valid_loss, valid_acc, valid_cm = self.run_epoch(self.valid_data_loader, is_train=False)
             train_loss, train_acc, train_cm = self.run_epoch(self.train_data_loader, is_train=True)
-            # print(train_cm)
-            # print(valid_cm)
             print('Epoch: {}\tTL: {:.2f}\tTA: {:.2f}\tVL: {:.2f}\tVA: {:.2f}'.format(
                 epoch, train_loss, 100. * train_acc, valid_loss, 100. * valid_acc))
             if valid_acc > best_val_acc:
@@ -402,17 +326,13 @@ def get_args():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--batch-size', type=int, default=16)
-    parser.add_argument('--n-channels', type=int, default=64)
-    parser.add_argument('--img-enc-size', type=int, default=128)
-    parser.add_argument('--lang-enc-size', type=int, default=128)
-    parser.add_argument('--classifier-size', type=int, default=512)
+    parser.add_argument('--n-channels', type=int, default=256)
+    parser.add_argument('--img-enc-size', type=int, default=512)
+    parser.add_argument('--lang-enc-size', type=int, default=512)
+    parser.add_argument('--classifier-size', type=int, default=1024)
     parser.add_argument('--num-layers', type=int, default=2)
     parser.add_argument('--max-epochs', type=int, default=0)
     parser.add_argument('--lr', type=float, default=1e-4)
-    parser.add_argument('--lr-img-enc', type=float, default=1e-4)
-    parser.add_argument('--lr-lang-enc', type=float, default=1e-4)
-    parser.add_argument('--lr-rest', type=float, default=1e-4)
-    parser.add_argument('--weight-decay', type=float, default=0.)
     parser.add_argument('--save-path', default=None)
     parser.add_argument('--logdir', default=None)
     parser.add_argument('--sampling', default='random')
@@ -421,5 +341,9 @@ def get_args():
     return args
 
 if __name__ == '__main__':
-    args = get_args()   
+    args = get_args()
+    torch.manual_seed(17)
+    np.random.seed(17)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
     main(args)
