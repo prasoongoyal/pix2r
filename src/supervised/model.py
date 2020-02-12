@@ -196,7 +196,7 @@ class Predict:
             lang = lang.cuda().long()
             traj_len = torch.Tensor([len(traj_r_sampled)])
             lang_len = torch.Tensor([len(lang)])
-            prob = self.model(
+            prob, _ = self.model(
                 torch.unsqueeze(traj_r_sampled, 0) / 255., 
                 torch.unsqueeze(traj_l_sampled, 0) / 255.,
                 torch.unsqueeze(traj_c_sampled, 0) / 255., 
