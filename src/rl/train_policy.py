@@ -84,11 +84,43 @@ def load_descriptions(vocab, mode):
             result[i] = [(d, encode_description(vocab, d)) for d in descr_list]
     return result
 
+class LangModule:
+    def __init__(self, args):
+        self.lang_network = Predict('../supervised/model.pt', lr=0, n_updates=0)
+        vocab = pickle.load(open('../../data/vocab_train.pkl', 'rb'))
+        valid_descr = load_descriptions(vocab, 'test')
+        t = args.trial
+        self.descr = valid_descr[args.main_obj][t][1]
+        self.traj_r = []
+        self.traj_l = []
+        self.traj_c = []
+        self.lang_rewards = []
+
+    def update(self, img_left, img_center, img_right):
+        img_left = Image.fromarray(img_left)
+        img_left = np.array(img_left.resize((50, 50)))
+        img_center = Image.fromarray(img_center)
+        img_center = np.array(img_center.resize((50, 50)))
+        img_right = Image.fromarray(img_right)
+        img_right = np.array(img_right.resize((50, 50)))
+        self.traj_r.append(img_right)
+        self.traj_l.append(img_left)
+        self.traj_c.append(img_center)
+
+    def get_rewards(self, done):
+        if done:
+            prob = 0
+        else:
+            prob = torch.tanh(self.lang_network.predict(
+                self.traj_r, self.traj_l, self.traj_c, self.descr)).data.cpu().numpy()[0][0]
+        self.lang_rewards.append(prob)
+        return self.lang_rewards
+
 def main(args):
     ############## Hyperparameters ##############
     render = False
     solved_reward = 1e10         # stop training if avg_reward > solved_reward
-    log_interval = 1000           # print avg reward in the interval
+    log_interval = 100           # print avg reward in the interval
     save_interval = 500
     max_episodes = 10000        # max training episodes
     max_timesteps = args.max_timesteps
@@ -138,56 +170,25 @@ def main(args):
         sparse_reward=args.sparse,
         max_timesteps = max_timesteps)
     if args.langreward:
-        lang_network = Predict('../supervised/model.pt', lr=0, n_updates=0)
-    vocab = pickle.load(open('../../data/vocab_train.pkl', 'rb'))
-    valid_descr = load_descriptions(vocab, 'test')
-    t = args.trial
-    descr = valid_descr[args.main_obj][t][1]
-    if args.drop >= 0:
-        descr = torch.cat([descr[:args.drop], descr[args.drop+1:]])
-    print(descr)
+        lang_module = LangModule(args)
+
     total_steps = 0
     i_episode = 0
     while True:
         i_episode += 1
-        traj_r = []
-        traj_l = []
-        traj_c = []
-        lang_rewards = []
         state = env.reset()
         img_left, img_center, img_right, _ = env.get_frame()
-        img_left = Image.fromarray(img_left)
-        img_left = np.array(img_left.resize((50, 50)))
-        img_center = Image.fromarray(img_center)
-        img_center = np.array(img_center.resize((50, 50)))
-        img_right = Image.fromarray(img_right)
-        img_right = np.array(img_right.resize((50, 50)))
-        traj_r.append(img_right)
-        traj_l.append(img_left)
-        traj_c.append(img_center)
+        lang_module.update(img_left, img_center, img_right)
         for t in range(max_timesteps):
             time_step +=1
             # Running policy_old:
             action = ppo.select_action(state, memory)
+            print(action)
             state, reward, done, success = env.step(action)
             img_left, img_center, img_right, _ = env.get_frame()
-            img_left = Image.fromarray(img_left)
-            img_left = np.array(img_left.resize((50, 50)))
-            img_center = Image.fromarray(img_center)
-            img_center = np.array(img_center.resize((50, 50)))
-            img_right = Image.fromarray(img_right)
-            img_right = np.array(img_right.resize((50, 50)))
+            lang_module.update(img_left, img_center, img_right)
             if args.langreward:
-                traj_r.append(img_right)
-                traj_l.append(img_left)
-                traj_c.append(img_center)
-                if done:
-                    prob = 0
-                else:
-                    prob = torch.tanh(lang_network.predict(
-                        traj_r, traj_l, traj_c, descr)).data.cpu().numpy()[0][0]
-                lang_rewards.append(prob)
-
+                lang_rewards = lang_module.get_rewards(done)
                 if len(lang_rewards) > 1:
                     reward += (gamma * lang_rewards[-1] - lang_rewards[-2])
             # Saving reward:
@@ -227,8 +228,8 @@ def main(args):
         if args.model_file and i_episode % save_interval == 0:
             torch.save(ppo.policy.state_dict(), args.model_file)
         
-        
-if __name__ == '__main__':
+
+def get_args():
     import argparse
     parser = argparse.ArgumentParser('Train PPO policy')
     parser.add_argument('--random-init', type=int, help='Environment seed')
@@ -250,7 +251,14 @@ if __name__ == '__main__':
     parser.add_argument('--eps-clip', type=float, default=0.2)
     parser.add_argument('--noise', type=float, default=0.)
     parser.add_argument('--drop', type=int, default=-1)
- 
     args = parser.parse_args()
+    return args
+         
+if __name__ == '__main__':
+    args = get_args()
+    torch.manual_seed(17)
+    np.random.seed(17)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
     main(args)
     
