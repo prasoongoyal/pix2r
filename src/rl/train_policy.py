@@ -1,23 +1,3 @@
-from dm_control import mujoco
-# Load a model from an MJCF XML string.
-xml_string = """
-<mujoco>
-  <worldbody>
-    <light name="top" pos="0 0 1.5"/>
-    <geom name="floor" type="plane" size="1 1 .1"/>
-    <body name="box" pos="0 0 .3">
-      <joint name="up_down" type="slide" axis="0 0 1"/>
-      <geom name="box" type="box" size=".2 .2 .2" rgba="1 0 0 1"/>
-      <geom name="sphere" pos=".2 .2 .2" size=".1" rgba="0 1 0 1"/>
-    </body>
-  </worldbody>
-</mujoco>
-"""
-
-physics = mujoco.Physics.from_xml_string(xml_string)
-# Render the default camera view as a numpy array of pixels.
-pixels = physics.render()
-
 import torch
 import torch.nn as nn
 from torch.distributions import MultivariateNormal
@@ -29,28 +9,13 @@ import sys
 from collections import namedtuple
 sys.path.insert(0, '/u/pgoyal/Research/metaworld')
 sys.path.insert(0, '../supervised')
-# sys.path.insert(0, '/u/pgoyal/Research/metaworld/supervised')
 from metaworld.envs.mujoco.sawyer_xyz.sawyer_random import SawyerRandomEnv
 from model import Predict
 import pickle
 from ppo import Memory, ActorCritic, PPO
+from utils import objects, enable_gpu_rendering
 
-def recreate_env(infile):
-    objects = [ 
-                'button_top', 
-                'button_side', 
-                'coffee_button', 
-                'handle_press_top',
-                'handle_press_side',
-                'door_lock',
-                'door_unlock',
-                'dial_turn',
-                'faucet_open',
-                'faucet_close',
-                'window_open',
-                'window_close',
-                'peg_unplug',
-              ]
+def load_env(infile):
     positions = []
     obj_ids = []
     with open(infile) as f:
@@ -64,7 +29,7 @@ def recreate_env(infile):
             positions.append((x, y))
             obj_ids.append(obj)
 
-    return objects, positions, obj_ids
+    return positions, obj_ids
 
 class LangModule:
     def __init__(self, args):
@@ -128,7 +93,7 @@ def main(args):
     betas = (0.9, 0.999)
     
     # creating environment
-    objects, positions, obj_ids = recreate_env(
+    positions, obj_ids = load_env(
         '../../data/envs/obj{}-env{}.txt'.format(args.obj_id, args.env_id))
     state_dim = 6
     action_dim = 4
@@ -206,14 +171,11 @@ def main(args):
         if args.model_file and i_episode % save_interval == 0:
             torch.save(ppo.policy.state_dict(), args.model_file)
         
-
 def get_args():
     import argparse
     parser = argparse.ArgumentParser('Train PPO policy')
     parser.add_argument('--random-init', type=int, help='Environment seed')
     parser.add_argument('--reward-type', help='sparse | dense | lang')
-    # parser.add_argument('--sparse', action='store_true', help='use sparse rewards')
-    # parser.add_argument('--langreward', action='store_true', help='use language-based rewards')
     parser.add_argument('--model-file', help='')
     parser.add_argument('--save-path', help='')
     parser.add_argument('--obj-id', type=int, help='Index of main object; 0-12')
@@ -229,6 +191,7 @@ def get_args():
     return args
          
 if __name__ == '__main__':
+    enable_gpu_rendering()
     args = get_args()
     torch.manual_seed(17)
     np.random.seed(17)
