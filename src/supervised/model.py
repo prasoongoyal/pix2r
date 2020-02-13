@@ -314,8 +314,8 @@ class Train:
             epoch += 1
 
 def main(args):
-    train_data = Data(mode='train', sampling=args.sampling, prefix=args.prefix)
-    valid_data = Data(mode='valid', sampling=args.sampling, prefix=args.prefix)
+    train_data = Data(mode='train')
+    valid_data = Data(mode='valid')
     print(len(train_data))
     print(len(valid_data))
     train_data_loader = DataLoader(
@@ -345,8 +345,6 @@ def get_args():
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--save-path', default=None)
     parser.add_argument('--logdir', default=None)
-    parser.add_argument('--sampling', default='random')
-    parser.add_argument('--prefix', action='store_true')
     args = parser.parse_args()
     return args
 

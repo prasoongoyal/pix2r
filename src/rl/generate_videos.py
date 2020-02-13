@@ -12,6 +12,8 @@ from metaworld.envs.mujoco.sawyer_xyz.sawyer_random import SawyerRandomEnv
 from ppo import Memory, ActorCritic, PPO
 from utils import objects, obj2grp
 
+DATASET_DIR = 'metaworld-dataset'
+
 def create_random_env(obj_id):
     # randonly sample positions until collision
     positions = []
@@ -77,10 +79,10 @@ def main(args):
 
     trial = 0
     env_id = args.start
-    save_dir = 'metaworld-dataset/obj{}-env{}/'.format(args.obj_id, env_id)
+    save_dir = '{}/obj{}-env{}/'.format(DATASET_DIR, args.obj_id, env_id)
     while os.path.exists('{}/env.txt'.format(save_dir)):
         env_id += 1
-        save_dir = 'metaworld-dataset/obj{}-env{}/'.format(args.obj_id, env_id)
+        save_dir = '{}/obj{}-env{}/'.format(DATASET_DIR, args.obj_id, env_id)
 
     while env_id < args.end:
         trial += 1
@@ -200,18 +202,15 @@ def main(args):
                     break
                         
             env_id += 1
-            save_dir = 'metaworld-dataset/obj{}-env{}/'.format(args.obj_id, env_id)
+            save_dir = '{}/obj{}-env{}/'.format(DATASET_DIR, args.obj_id, env_id)
             while os.path.exists('{}/env.txt'.format(save_dir)):
                 env_id += 1
-                save_dir = 'metaworld-dataset/obj{}-env{}/'.format(args.obj_id, env_id)
+                save_dir = '{}/obj{}-env{}/'.format(DATASET_DIR, args.obj_id, env_id)
 
 def get_args():
     import argparse
     parser = argparse.ArgumentParser('Train PPO policy')
     parser.add_argument('--obj-id', type=int, help='Index of main object; 0-12')
-    parser.add_argument('--env-id', type=int, help='Index of environment; 0-99')
-    parser.add_argument('--random-init', type=int, help='Environment seed')
-    parser.add_argument('--sparse', action='store_true', help='use sparse rewards')
     parser.add_argument('--start', type=int, help='')
     parser.add_argument('--end', type=int, help='')
     args = parser.parse_args()

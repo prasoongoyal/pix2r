@@ -33,7 +33,7 @@ def load_env(infile):
 
 class LangModule:
     def __init__(self, args):
-        self.lang_network = Predict('../supervised/model.pt', lr=0, n_updates=0)
+        self.lang_network = Predict(args.model_file, lr=0, n_updates=0)
         self.descr = self.load_description(args)
         self.traj_r = []
         self.traj_l = []

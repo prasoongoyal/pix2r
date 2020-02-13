@@ -39,9 +39,7 @@ class PadBatch:
                 labels_batch, obj_batch, env_batch, weight_batch
 
 class Data(Dataset):
-    def __init__(self, mode, sampling, prefix, repeat=1):
-        self.sampling = sampling
-        self.prefix = prefix
+    def __init__(self, mode, repeat=10):
         self.vocab = pickle.load(open('{}/vocab_train.pkl'.format(DATA_DIR), 'rb'))
         self.descriptions = self.load_descriptions(mode)
         self.video_ids = self.get_video_ids(mode)
