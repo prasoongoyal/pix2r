@@ -66,35 +66,29 @@ def recreate_env(infile):
 
     return objects, positions, obj_ids
 
-def encode_description(vocab, descr):
-    result = []
-    for w in descr.split():
-            try:
-                    t = vocab.index(w)
-            except ValueError:
-                    t = vocab.index('<unk>')
-            result.append(t)
-    return torch.Tensor(result)
-
-def load_descriptions(vocab, mode):
-    descriptions = pickle.load(open('../../data/{}_descr.pkl'.format(mode), 'rb'))
-    result = {}
-    for i in descriptions.keys():
-            descr_list = descriptions[i]
-            result[i] = [(d, encode_description(vocab, d)) for d in descr_list]
-    return result
-
 class LangModule:
     def __init__(self, args):
         self.lang_network = Predict('../supervised/model.pt', lr=0, n_updates=0)
-        vocab = pickle.load(open('../../data/vocab_train.pkl', 'rb'))
-        valid_descr = load_descriptions(vocab, 'test')
-        t = args.trial
-        self.descr = valid_descr[args.main_obj][t][1]
+        self.descr = self.load_description(args)
         self.traj_r = []
         self.traj_l = []
         self.traj_c = []
-        self.lang_rewards = []
+        self.potentials = []
+
+    def encode_description(self, vocab, descr):
+        result = []
+        for w in descr.split():
+            try:
+                t = vocab.index(w)
+            except ValueError:
+                t = vocab.index('<unk>')
+            result.append(t)
+        return torch.Tensor(result)
+
+    def load_description(self, args, mode='test'):
+        vocab = pickle.load(open('../../data/vocab_train.pkl', 'rb'))
+        descriptions = pickle.load(open('../../data/{}_descr.pkl'.format(mode), 'rb'))
+        return self.encode_description(vocab, descriptions[args.obj_id][args.descr_id])
 
     def update(self, img_left, img_center, img_right):
         img_left = Image.fromarray(img_left)
@@ -113,17 +107,13 @@ class LangModule:
         else:
             prob = torch.tanh(self.lang_network.predict(
                 self.traj_r, self.traj_l, self.traj_c, self.descr)).data.cpu().numpy()[0][0]
-        self.lang_rewards.append(prob)
-        return self.lang_rewards
+        self.potentials.append(prob)
+        return self.potentials
 
 def main(args):
     ############## Hyperparameters ##############
-    render = False
-    solved_reward = 1e10         # stop training if avg_reward > solved_reward
     log_interval = 100           # print avg reward in the interval
     save_interval = 500
-    max_episodes = 10000        # max training episodes
-    max_timesteps = args.max_timesteps
     max_total_timesteps = args.max_total_timesteps
     if max_total_timesteps == 0:
         max_total_timesteps = np.inf
@@ -137,24 +127,14 @@ def main(args):
     lr = 0.0003                 # parameters for Adam optimizer
     betas = (0.9, 0.999)
     
-    # random_seed = 17
-    random_seed = None
-    #############################################
-
     # creating environment
     objects, positions, obj_ids = recreate_env(
-        '../../data/envs/obj{}-env{}.txt'.format(args.main_obj, args.env_id))
+        '../../data/envs/obj{}-env{}.txt'.format(args.obj_id, args.env_id))
     state_dim = 6
     action_dim = 4
 
-    if random_seed:
-        print("Random Seed: {}".format(random_seed))
-        torch.manual_seed(random_seed)
-        np.random.seed(random_seed)
-    
     memory = Memory()
     ppo = PPO(args, state_dim, action_dim, action_std, lr, betas, gamma, K_epochs, eps_clip)
-    directory = "./policies-grid-all/"
     
     # logging variables
     running_reward = 0
@@ -168,7 +148,7 @@ def main(args):
         obj_ids=obj_ids, 
         state_rep='feature', 
         sparse_reward=args.sparse,
-        max_timesteps = max_timesteps)
+        max_timesteps = args.max_timesteps)
     if args.langreward:
         lang_module = LangModule(args)
 
@@ -179,18 +159,17 @@ def main(args):
         state = env.reset()
         img_left, img_center, img_right, _ = env.get_frame()
         lang_module.update(img_left, img_center, img_right)
-        for t in range(max_timesteps):
+        for t in range(args.max_timesteps):
             time_step +=1
             # Running policy_old:
             action = ppo.select_action(state, memory)
-            print(action)
             state, reward, done, success = env.step(action)
             img_left, img_center, img_right, _ = env.get_frame()
             lang_module.update(img_left, img_center, img_right)
             if args.langreward:
-                lang_rewards = lang_module.get_rewards(done)
-                if len(lang_rewards) > 1:
-                    reward += (gamma * lang_rewards[-1] - lang_rewards[-2])
+                potentials = lang_module.get_rewards(done)
+                if len(potentials) > 1:
+                    reward += (gamma * potentials[-1] - potentials[-2])
             # Saving reward:
             memory.rewards.append(reward)
             
@@ -201,21 +180,17 @@ def main(args):
                 total_steps += time_step
                 time_step = 0
             running_reward += reward
-            if render:
-                env.render()
-
 
             if (total_steps + time_step) % log_interval == 0:
                 current_time = datetime.now().strftime('%H:%M:%S')
                 print('[{}] \t Episode {} \t Timesteps: {} \t Success: {}'.format(
                     current_time, i_episode, total_steps + time_step, sum(success_list)))
-            if done:
-                success_list.append(success)
+        
+            if done or (total_steps + time_step >= max_total_timesteps):
                 break
         
-            if total_steps + time_step >= max_total_timesteps:
-                break
-        
+        success_list.append(success)
+
         if total_steps + time_step >= max_total_timesteps:
             break
         
@@ -224,7 +199,6 @@ def main(args):
                 torch.save(ppo.policy.state_dict(), args.save_path)
                 break
 
-        
         if args.model_file and i_episode % save_interval == 0:
             torch.save(ppo.policy.state_dict(), args.model_file)
         
@@ -237,20 +211,15 @@ def get_args():
     parser.add_argument('--langreward', action='store_true', help='use language-based rewards')
     parser.add_argument('--model-file', help='')
     parser.add_argument('--save-path', help='')
-    parser.add_argument('--main-obj', type=int, help='Index of main object; 0-12')
+    parser.add_argument('--obj-id', type=int, help='Index of main object; 0-12')
     parser.add_argument('--env-id', type=int, help='Index of environment; 0-99')
-    parser.add_argument('--trial', type=int, help='')
-    parser.add_argument('--n-channels', type=int, default=64)
-    parser.add_argument('--img-enc-size', type=int, default=128)
-    parser.add_argument('--lang-enc-size', type=int, default=128)
+    parser.add_argument('--descr-id', type=int, help='')
     parser.add_argument('--max-timesteps', type=int, default=500)
     parser.add_argument('--max-total-timesteps', type=int, default=500000)
     parser.add_argument('--update-timestep', type=int, default=2000)
     parser.add_argument('--action-std', type=float, default=0.5)
     parser.add_argument('--K-epochs', type=int, default=10)
     parser.add_argument('--eps-clip', type=float, default=0.2)
-    parser.add_argument('--noise', type=float, default=0.)
-    parser.add_argument('--drop', type=int, default=-1)
     args = parser.parse_args()
     return args
          

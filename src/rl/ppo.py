@@ -8,14 +8,12 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 class Memory:
     def __init__(self):
         self.actions = []
-        self.images = []
         self.ee_pos = []
         self.logprobs = []
         self.rewards = []
     
     def clear_memory(self):
         del self.actions[:]
-        del self.images[:]
         del self.ee_pos[:]
         del self.logprobs[:]
         del self.rewards[:]
@@ -23,32 +21,6 @@ class Memory:
 class ActorCritic(nn.Module):
     def __init__(self, args, state_dim, action_dim, action_std):
         super(ActorCritic, self).__init__()
-        # action mean range -1 to 1
-        self.ee_enc = nn.Sequential(
-                nn.Linear(3, 64),
-                nn.Tanh(),
-                nn.Linear(64, 4),
-                )
-
-        # image encoder
-        self.img_enc = nn.Sequential(
-            nn.Conv2d(3, args.n_channels, 3, 1),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-
-            nn.Conv2d(args.n_channels, args.n_channels, 3, 1),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-
-            nn.Conv2d(args.n_channels, args.n_channels, 3, 1),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-
-            nn.Flatten(),
-            nn.Linear(4*4*args.n_channels, args.img_enc_size),
-            nn.Linear(args.img_enc_size, args.img_enc_size),
-        )
-
         self.actor_mean =  nn.Sequential(
                 nn.Linear(state_dim, 64),
                 nn.Tanh(),
@@ -78,7 +50,6 @@ class ActorCritic(nn.Module):
     def forward(self):
         raise NotImplementedError
     
-
     def act(self, state, memory):
         state = torch.unsqueeze(torch.from_numpy(state), 0).cuda().float()
         with torch.no_grad():
@@ -100,12 +71,9 @@ class ActorCritic(nn.Module):
     def compute_logprobs(self, action_mean, action_var, action):
         k = action.size(-1)
         delta = action - action_mean
-        result = -k/2. * torch.log(torch.Tensor([2 * np.pi]).cuda()) - 0.5 * torch.sum(torch.log(action_var), dim=-1) - 0.5 * torch.sum(delta**2 / action_var, dim=-1)
-        return result
-
-    def compute_entropy(self, action_var):
-        t = 2 * np.pi * np.e * action_var
-        result = 0.5 * torch.sum(torch.log(t), dim=-1)
+        result = -k/2. * torch.log(torch.Tensor([2 * np.pi]).cuda()) - \
+            0.5 * torch.sum(torch.log(action_var), dim=-1) - \
+            0.5 * torch.sum(delta**2 / action_var, dim=-1)
         return result
 
     def evaluate(self, state, action):
@@ -115,10 +83,9 @@ class ActorCritic(nn.Module):
         action_var = action_std * action_std
         
         action_logprobs = self.compute_logprobs(action_mean, action_var, action)
-        dist_entropy = self.compute_entropy(action_var)
         state_value = self.critic(state)
 
-        return action_logprobs, torch.squeeze(state_value), dist_entropy
+        return action_logprobs, torch.squeeze(state_value)
 
 class PPO:
     def __init__(self, args, state_dim, action_dim, action_std, lr, betas, gamma, K_epochs, eps_clip):
@@ -135,10 +102,8 @@ class PPO:
         self.MseLoss = nn.MSELoss()
     
     def select_action(self, state, memory):
-        # state = torch.FloatTensor(state.reshape(1, -1)).to(device)
         return self.policy_old.act(state, memory).cpu().data.numpy().flatten()
    
-    # @profile
     def update(self, memory):
         # Monte Carlo estimate of rewards:
         rewards = []
@@ -176,7 +141,7 @@ class PPO:
                 rewards_batch = rewards[batch_start: batch_start+batch_size].cuda()
 
                 # Evaluating old actions and values :
-                logprobs, state_values, dist_entropy = self.policy.evaluate(ee_pos_batch, actions_batch)
+                logprobs, state_values = self.policy.evaluate(ee_pos_batch, actions_batch)
                 
                 # Finding the ratio (pi_theta / pi_theta__old):
                 ratios = torch.exp(logprobs - logprobs_batch.detach())
@@ -185,7 +150,7 @@ class PPO:
                 advantages = rewards_batch - state_values.detach()   
                 surr1 = ratios * advantages
                 surr2 = torch.clamp(ratios, 1-self.eps_clip, 1+self.eps_clip) * advantages
-                loss = -torch.min(surr1, surr2) + 0.5*self.MseLoss(state_values, rewards_batch) - 0.0*dist_entropy
+                loss = -torch.min(surr1, surr2) + 0.5*self.MseLoss(state_values, rewards_batch)
                 
                 # take gradient step
                 self.optimizer.zero_grad()
