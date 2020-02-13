@@ -147,9 +147,9 @@ def main(args):
         positions=positions, 
         obj_ids=obj_ids, 
         state_rep='feature', 
-        sparse_reward=args.sparse,
+        reward_type=args.reward_type,
         max_timesteps = args.max_timesteps)
-    if args.langreward:
+    if args.reward_type == 'lang':
         lang_module = LangModule(args)
 
     total_steps = 0
@@ -157,16 +157,19 @@ def main(args):
     while True:
         i_episode += 1
         state = env.reset()
-        img_left, img_center, img_right, _ = env.get_frame()
-        lang_module.update(img_left, img_center, img_right)
-        for t in range(args.max_timesteps):
+        if args.reward_type == 'lang':
+            img_left, img_center, img_right, _ = env.get_frame()
+            lang_module.update(img_left, img_center, img_right)
+        # for t in range(args.max_timesteps):
+        while True:
             time_step +=1
             # Running policy_old:
             action = ppo.select_action(state, memory)
             state, reward, done, success = env.step(action)
-            img_left, img_center, img_right, _ = env.get_frame()
-            lang_module.update(img_left, img_center, img_right)
-            if args.langreward:
+
+            if args.reward_type == 'lang':
+                img_left, img_center, img_right, _ = env.get_frame()
+                lang_module.update(img_left, img_center, img_right)
                 potentials = lang_module.get_rewards(done)
                 if len(potentials) > 1:
                     reward += (gamma * potentials[-1] - potentials[-2])
@@ -175,6 +178,7 @@ def main(args):
             
             # update if its time
             if time_step % update_timestep == 0:
+                print(action)
                 ppo.update(memory)
                 memory.clear_memory()
                 total_steps += time_step
@@ -207,13 +211,14 @@ def get_args():
     import argparse
     parser = argparse.ArgumentParser('Train PPO policy')
     parser.add_argument('--random-init', type=int, help='Environment seed')
-    parser.add_argument('--sparse', action='store_true', help='use sparse rewards')
-    parser.add_argument('--langreward', action='store_true', help='use language-based rewards')
+    parser.add_argument('--reward-type', help='sparse | dense | lang')
+    # parser.add_argument('--sparse', action='store_true', help='use sparse rewards')
+    # parser.add_argument('--langreward', action='store_true', help='use language-based rewards')
     parser.add_argument('--model-file', help='')
     parser.add_argument('--save-path', help='')
     parser.add_argument('--obj-id', type=int, help='Index of main object; 0-12')
     parser.add_argument('--env-id', type=int, help='Index of environment; 0-99')
-    parser.add_argument('--descr-id', type=int, help='')
+    parser.add_argument('--descr-id', type=int, help='Index of description; 0-2')
     parser.add_argument('--max-timesteps', type=int, default=500)
     parser.add_argument('--max-total-timesteps', type=int, default=500000)
     parser.add_argument('--update-timestep', type=int, default=2000)

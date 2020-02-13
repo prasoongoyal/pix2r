@@ -17,7 +17,6 @@ from metaworld.envs.mujoco.sawyer_xyz.base import OBS_TYPE
 class SawyerRandomEnv(SawyerXYZEnv):
     def __init__(
             self,
-            random_init=False,
             obs_type='plain',
             goal_low=None,
             goal_high=None,
@@ -38,18 +37,13 @@ class SawyerRandomEnv(SawyerXYZEnv):
         self._camera_pos = camera_pos
         self.state_rep = state_rep
         self.reward_type = reward_type
-        # hand_low=(-0.5, 0.40, 0.05)
-        # hand_high=(0.5, 1, 0.5)
-        # obj_low=(-0.1, 0.7, 0.05)
-        # obj_high=(0.1, 0.8, 0.05)
+
         obj_low=(-0.4, 0.4, 0.05)
         obj_high=(0.4, 1.0, 0.05)
         SawyerXYZEnv.__init__(
             self,
             frame_skip=5,
             action_scale=1./100,
-            # hand_low=hand_low,
-            # hand_high=hand_high,
             model_name=self.model_name,
             **kwargs
         )
@@ -70,7 +64,6 @@ class SawyerRandomEnv(SawyerXYZEnv):
         if goal_high is None:
             goal_high = self.hand_high
 
-        self.random_init = random_init
         self.max_path_length = max_timesteps
         self.rotMode = rotMode
         if rotMode == 'fixed':
@@ -127,24 +120,6 @@ class SawyerRandomEnv(SawyerXYZEnv):
 
     # @profile
     def step(self, action):
-        '''
-        hand_low = (-0.2, 0.3, 0.05)
-        hand_high = (0.2, 1.0, 1.2)
-        action[:3] = np.clip(action[:3], hand_low, hand_high)
-        self.data.set_mocap_pos('mocap', action[:3])
-        self.data.set_mocap_quat('mocap', np.array([1, 0, 1, 0]))
-        self.do_simulation([-action[-1], action[1]], self.frame_skip)
-        print(action)
-        print('MP :', self.data.mocap_pos)
-        print('MQ :', self.data.mocap_quat)
-        print('EE :', self.get_endeff_pos())
-
-        frame = self.get_frame()
-        from PIL import Image
-        img = Image.fromarray(np.uint8(frame[2]))
-        img.save('sim_images/{}.png'.format(self.curr_path_length))
-        '''
-
         if self.rotMode == 'euler':
             action_ = np.zeros(7)
             action_[:3] = action[:3]
@@ -159,22 +134,13 @@ class SawyerRandomEnv(SawyerXYZEnv):
         self.do_simulation([action[-1], -action[-1]])
 
         # The marker seems to get reset every time you do a simulation
-        # self._set_goal_marker(self._state_goal)
         ob_feature = self._get_obs()
-        # reward, reachDist, pressDist = self.compute_reward(action, ob)
         self.curr_path_length +=1
-        #info = self._get_info()
         reward, success = self.compute_reward(action, ob_feature)
         if (self.curr_path_length > self.max_path_length) or success:
             done = True
-             # input()
         else:
             done = False
-        # info = {'reward': reward, 'success': success, 'goal': self._state_goal}
-        # info = {'reachDist': reachDist, 'goalDist': pullDist, 'epRew' : reward, 'pickRew':None, 'success': float(pullDist <= 0.03)}
-        # info['goal'] = self._state_goal
-        # info = {'reachDist': reachDist, 'goalDist': pressDist, 'epRew': reward, 'pickRew':None, 'success': float(pressDist <= 0.02)}
-        # info['goal'] = self._state_goal
         if self.state_rep == 'feature':
             return ob_feature, reward, done, success
         elif self.state_rep == 'pixel':
@@ -220,9 +186,6 @@ class SawyerRandomEnv(SawyerXYZEnv):
         elif self._obj_goal == 'peg_unplug':
             objPos = self.data.site_xpos[self.model.site_name2id('pegEnd')]
 
-
-        # objPos = self.get_site_pos('dialStart')
-        # angle = self.get_angle()
         flat_obs = np.concatenate((hand, objPos))
         if self.obs_type == 'with_goal_and_id':
             return np.concatenate([
@@ -299,8 +262,9 @@ class SawyerRandomEnv(SawyerXYZEnv):
     def _set_obj_xyz(self, pos):
         qpos = self.data.qpos.flat.copy()
         qvel = self.data.qvel.flat.copy()
-        qpos[14] = pos
-        qvel[14] = 0
+        joint_id = self.model.joint_names.index('doorJoint')
+        qpos[joint_id] = pos
+        qvel[joint_id] = 0
         self.set_state(qpos, qvel)
 
 
@@ -401,10 +365,8 @@ class SawyerRandomEnv(SawyerXYZEnv):
                 door_pos = np.array([x, y, 0.1])
                 self.sim.model.body_pos[self.model.body_name2id('door')] = door_pos
                 self.sim.model.body_pos[self.model.body_name2id('door_lock')] = door_pos
-                # import pdb
-                # pdb.set_trace()
+                # rotate the handle
                 self._set_obj_xyz(1.5708)
-                # self.
                 if self._state_goal is None:
                     self._obj_goal = 'door_unlock'
                     self._state_goal = door_pos + np.array([0.1, -0.04, 0.07])
@@ -491,20 +453,11 @@ class SawyerRandomEnv(SawyerXYZEnv):
             raise NotImplementedError('Invalid state representation!')
 
     def _reset_hand(self):
-        # if self.random_init:
-        #     hand_pos = np.random.uniform(
-        #         self.hand_low,
-        #         self.hand_high,
-        #         size=(self.hand_low.size),
-        #     )
-        #     self.hand_init_pos = hand_pos
-
         hand_low = (-0.1, 0.3, 0.8)
         hand_high = (0.1, 0.4, 1.2)
         hand_pos = np.random.uniform(hand_low, hand_high, size=3)
 
         for i in range(10):
-            # self.data.set_mocap_pos('mocap', self.hand_init_pos)
             self.data.set_mocap_pos('mocap', hand_pos)
             self.data.set_mocap_quat('mocap', np.array([1, 0, 1, 0]))
             self.do_simulation([-1, 1], self.frame_skip)
@@ -549,7 +502,7 @@ class SawyerRandomEnv(SawyerXYZEnv):
             pressRew = max(pressRew, 0)
             reward = reachRew + pressRew
             success = (pressDist <= 0.02)
-            # return [reward, reachDist, pressDist] 
+
         elif self._obj_goal == 'button_side':
             if isinstance(obs, dict): 
                 obs = obs['state_observation']
@@ -572,7 +525,6 @@ class SawyerRandomEnv(SawyerXYZEnv):
             reward = -reachDist + pressRew
             success = (pressDist <= 0.02)
 
-            # return [reward, reachDist, pressDist] 
         elif self._obj_goal == 'coffee_button':
             if isinstance(obs, dict): 
                 obs = obs['state_observation']
@@ -594,7 +546,7 @@ class SawyerRandomEnv(SawyerXYZEnv):
             pressRew = max(pressRew, 0)
             reward = -reachDist + pressRew
             success = (pressDist <= 0.02)
-            # return [reward, reachDist, pressDist]
+
         elif self._obj_goal == 'handle_press_top':
             if isinstance(obs, dict): 
                 obs = obs['state_observation']
@@ -616,7 +568,7 @@ class SawyerRandomEnv(SawyerXYZEnv):
             pressRew = max(pressRew, 0)
             reward = -reachDist + pressRew
             success = (pressDist <= 0.04)
-            # return [reward, reachDist, pressDist] 
+
         elif self._obj_goal == 'handle_press_side':
             if isinstance(obs, dict): 
                 obs = obs['state_observation']
@@ -639,7 +591,6 @@ class SawyerRandomEnv(SawyerXYZEnv):
             reward = -reachDist + pressRew
             success = (pressDist <= 0.04)
 
-            # return [reward, reachDist, pressDist] 
         elif self._obj_goal == 'door_lock':
             if isinstance(obs, dict): 
                 obs = obs['state_observation']
@@ -677,7 +628,6 @@ class SawyerRandomEnv(SawyerXYZEnv):
             pullRew = pullReward()
             reward = reachRew + pullRew# - actions[-1]/50
             success = (pullDist <= 0.04)
-            # return [reward, reachDist, pullDist] 
         elif self._obj_goal == 'door_unlock':
             if isinstance(obs, dict): 
                 obs = obs['state_observation']
@@ -714,7 +664,6 @@ class SawyerRandomEnv(SawyerXYZEnv):
             reward = reachRew + pullRew# - actions[-1]/50
             success = (pullDist <= 0.05)
           
-            # return [reward, reachDist, pullDist] 
         elif self._obj_goal == 'dial_turn':
             if isinstance(obs, dict): 
                 obs = obs['state_observation']
@@ -752,7 +701,7 @@ class SawyerRandomEnv(SawyerXYZEnv):
             pullRew = pullReward()
             reward = reachRew + pullRew# - actions[-1]/50
             success = (pullDist <= 0.03)
-            # return [reward, reachDist, pullDist] 
+        
         elif self._obj_goal == 'faucet_open':
             if isinstance(obs, dict): 
                 obs = obs['state_observation']
@@ -766,12 +715,6 @@ class SawyerRandomEnv(SawyerXYZEnv):
 
             pullDist = np.linalg.norm(objPos - pullGoal)
             reachDist = np.linalg.norm(objPos - fingerCOM)  
-            # reachDistxy = np.linalg.norm(objPos[:-1] - fingerCOM[:-1])    
-            # zDist = np.linalg.norm(fingerCOM[-1] - self.init_fingerCOM[-1])   
-            # if reachDistxy < 0.05: #0.02  
-            #     reachRew = -reachDist 
-            # else: 
-            #     reachRew =  -reachDistxy - zDist  
             reachRew = -reachDist
 
             def reachCompleted():
@@ -787,23 +730,16 @@ class SawyerRandomEnv(SawyerXYZEnv):
 
             def pullReward():
                 c1 = 1000 ; c2 = 0.01 ; c3 = 0.001
-                # c1 = 10 ; c2 = 0.01 ; c3 = 0.001
                 if self.reachCompleted:
                     pullRew = 1000*(self.maxPullDist - pullDist) + c1*(np.exp(-(pullDist**2)/c2) + np.exp(-(pullDist**2)/c3))
                     pullRew = max(pullRew,0)
                     return pullRew
                 else:
                     return 0
-                # pullRew = 1000*(self.maxPullDist - pullDist) + c1*(np.exp(-(pullDist**2)/c2) + np.exp(-(pullDist**2)/c3))
-                # pullRew = max(pullRew,0)
-                # return pullRew
-            # pullRew = -pullDist
             pullRew = pullReward()
             reward = reachRew + pullRew# - actions[-1]/50
             success = (pullDist <= 0.05)
-            # reward = pullRew# - actions[-1]/50
           
-            # return [reward, reachDist, pullDist] 
         elif self._obj_goal == 'faucet_close':
             if isinstance(obs, dict): 
                 obs = obs['state_observation']
@@ -842,7 +778,6 @@ class SawyerRandomEnv(SawyerXYZEnv):
             reward = reachRew + pullRew# - actions[-1]/50
             success = (pullDist <= 0.05)
           
-            # return [reward, reachDist, pullDist] 
         elif self._obj_goal == 'window_open':
             if isinstance(obs, dict): 
                 obs = obs['state_observation']
@@ -877,7 +812,7 @@ class SawyerRandomEnv(SawyerXYZEnv):
                 pullRew = 0
             reward = reachRew + pullRew
             success = (pullDist <= 0.05)
-            # return [reward, reachDist, None, pullDist]
+        
         elif self._obj_goal == 'window_close':
             if isinstance(obs, dict): 
                 obs = obs['state_observation']
@@ -912,7 +847,7 @@ class SawyerRandomEnv(SawyerXYZEnv):
                 pullRew = 0
             reward = reachRew + pullRew
             success = (pullDist <= 0.05)
-            # return [reward, reachDist, None, pullDist]
+        
         elif self._obj_goal == 'peg_unplug':
             if isinstance(obs, dict):
                 obs = obs['state_observation']
@@ -953,7 +888,6 @@ class SawyerRandomEnv(SawyerXYZEnv):
                 self.reachCompleted = True
 
             def placeReward():
-                # c1 = 1000 ; c2 = 0.03 ; c3 = 0.003
                 c1 = 1000 ; c2 = 0.01 ; c3 = 0.001
                 if self.reachCompleted:
                     placeRew = 1000*(self.maxPlacingDist - placingDist) + c1*(np.exp(-(placingDist**2)/c2) + np.exp(-(placingDist**2)/c3))
@@ -967,62 +901,10 @@ class SawyerRandomEnv(SawyerXYZEnv):
             assert placeRew >=0
             reward = reachRew + placeRew
             success = (placingDist <= 0.07)
-            # return [reward, reachRew, reachDist, None, placeRew, placingDist]  
+
         if self.reward_type == 'sparse':
             reward = 1 if success else 0
         return reward, success
-        # reward = 1 if success else 0
-        # return reward, success
-        # if isinstance(obs, dict): 
-        #     obs = obs['state_observation']
-
-        # objPos = obs[3:6]
-
-        # rightFinger, leftFinger = self.get_site_pos('rightEndEffector'), self.get_site_pos('leftEndEffector')
-        # fingerCOM  =  (rightFinger + leftFinger)/2
-
-        # pullGoal = self._state_goal
-
-        # pullDist = np.abs(objPos[1] - pullGoal[1])# + np.abs(objPos[0] - pullGoal[0])
-        # reachDist = np.linalg.norm(objPos - fingerCOM)
-        # # reachDistxy = np.linalg.norm(objPos[:-1] - fingerCOM[:-1])
-        # # zDist = np.linalg.norm(fingerCOM[-1] - self.init_fingerCOM[-1])
-        # # if reachDistxy < 0.05: #0.02
-        # #     reachRew = -reachDist
-        # # else:
-        # #     reachRew =  -reachDistxy - zDist
-        # reachRew = -reachDist
-
-        # def reachCompleted():
-        #     if reachDist < 0.05:
-        #         return True
-        #     else:
-        #         return False
-
-        # if reachCompleted():
-        #     self.reachCompleted = True
-        # else:
-        #     self.reachCompleted = False
-
-        # def pullReward():
-        #     # c1 = 5000 ; c2 = 0.001 ; c3 = 0.0001
-        #     c1 = 1000 ; c2 = 0.001 ; c3 = 0.0001
-        #     # c1 = 10 ; c2 = 0.01 ; c3 = 0.001
-        #     if self.reachCompleted:
-        #         pullRew = 1000*(self.maxPullDist - pullDist) + c1*(np.exp(-(pullDist**2)/c2) + np.exp(-(pullDist**2)/c3))
-        #         pullRew = max(pullRew,0)
-        #         return pullRew
-        #     else:
-        #         return 0
-        #     # pullRew = 1000*(self.maxPullDist - pullDist) + c1*(np.exp(-(pullDist**2)/c2) + np.exp(-(pullDist**2)/c3))
-        #     # pullRew = max(pullRew,0)
-        #     # return pullRew
-        # # pullRew = -pullDist
-        # pullRew = pullReward()
-        # reward = reachRew + pullRew# - actions[-1]/50
-        # # reward = pullRew# - actions[-1]/50
-      
-        # return [reward, reachDist, pullDist] 
 
     def get_diagnostics(self, paths, prefix=''):
         statistics = OrderedDict()
@@ -1039,26 +921,16 @@ class SawyerRandomEnv(SawyerXYZEnv):
         obs_pixel_center = self.render(mode = 'rgb_array')
         self._camera_pos = 'right'
         obs_pixel_right = self.render(mode = 'rgb_array')
-        # obs = (obs_pixel_left, obs_pixel_center, obs_pixel_right, hand)
         obs = (obs_pixel_left, obs_pixel_center, obs_pixel_right, None)
         return obs
 
     def viewer_setup(self):
-        # print(self._camera_pos)
-    #     # self.viewer.cam.trackbodyid = -1         # id of the body to track ()
-    #     # self.viewer.cam.distance = self.model.stat.extent * 1.0         # how much you "zoom in", model.stat.extent is the max limits of the arena
-    #     # self.viewer.cam.lookat[0] += 0.5         # x,y,z offset from the object (works if trackbodyid=-1)
-    #     # self.viewer.cam.lookat[1] += 0.5
-    #     # self.viewer.cam.lookat[2] += 0.5
-    #     # self.viewer.cam.elevation = -90           # camera rotation around the axis in the plane going through the frame origin (if 0 you just see a line)
-    #     # self.viewer.cam.azimuth = 0              # camera rotation around the camera's vertical axis
         self.viewer.cam.trackbodyid = -1
         self.viewer.cam.lookat[0] = 0
         self.viewer.cam.lookat[1] = 0.75
         self.viewer.cam.lookat[2] = 0.4
         self.viewer.cam.distance = 2.0
         self.viewer.cam.elevation = -30
-        # self.viewer.cam.azimuth = 90
         self.viewer.cam.trackbodyid = -1
         if self._camera_pos == 'right':
             self.viewer.cam.azimuth = 135
@@ -1068,25 +940,4 @@ class SawyerRandomEnv(SawyerXYZEnv):
             self.viewer.cam.distance = 1.10
         elif self._camera_pos == 'left':
             self.viewer.cam.azimuth = 45
-        # out = self.sim.render(width=200, height=200, camera_name='head_mounted', depth=False)
-        # import pdb
-        # pdb.set_trace()
-
-        # self.viewer.cam.trackbodyid = -1
-        # self.viewer.cam.lookat[0] = 0
-        # self.viewer.cam.lookat[1] = 0.75
-        # self.viewer.cam.lookat[2] = 0.4
-        # self.viewer.cam.distance = 1.5
-        # self.viewer.cam.elevation = -20
-        # self.viewer.cam.trackbodyid = -1
-        # self.viewer.cam.azimuth = 120
-
-        # self.viewer.cam.lookat[0] = 0
-        # self.viewer.cam.lookat[1] = 1
-        # self.viewer.cam.lookat[2] = 0.3
-        # self.viewer.cam.distance = 0.35
-        # self.viewer.cam.elevation = -35
-        # self.viewer.cam.azimuth = 270
-        # self.viewer.cam.trackbodyid = -1
-
 
