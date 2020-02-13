@@ -10,7 +10,7 @@ from torch.nn.utils.rnn import pad_sequence
 import pickle
 
 DATA_DIR = '../../data/'
-FRAMES_DIR = '../../data/frames/'
+FRAMES_DIR = '../../data/processed-frames/'
 ENVS_DIR = '../../data/envs/'
 
 TRAIN_VIDEOS = list(range(80))
