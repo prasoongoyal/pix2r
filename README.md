@@ -18,17 +18,20 @@ python generate_videos.py --obj-id=6 --start=0 --end=100
 ```
 
 ## Supervised learning:
-1) Download data into the data/ directory:
+1) Download and extract data into the data/ directory (requires about 50 GB of disk space):
 ```bash
+mkdir data; cd data
 wget http://www.cs.utexas.edu/~ml/pix2r/envs.zip
 wget http://www.cs.utexas.edu/~ml/pix2r/frames.zip
 wget http://www.cs.utexas.edu/~ml/pix2r/test_descr.pkl
 wget http://www.cs.utexas.edu/~ml/pix2r/train_descr.pkl
 wget http://www.cs.utexas.edu/~ml/pix2r/valid_descr.pkl
 wget http://www.cs.utexas.edu/~ml/pix2r/vocab_train.pkl
+unzip envs.zip
+unzip frames.zip
+cd -
 ```
-2) Extract envs.zip into envs/ and frames.zip into frames/ directories within data/.
-3) Run the following command in src/supervised
+2) Run the following command in src/supervised
 ```bash
 python model.py --save-path=<save-path>
 ```
