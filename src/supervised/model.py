@@ -75,39 +75,91 @@ class Model(nn.Module):
         super().__init__()
         self.args = args
 
-        self.img_enc_r = ImgEnc(args)
-        self.img_enc_l = ImgEnc(args)
-        self.img_enc_c = ImgEnc(args)
+        if args.view == 'all':
+            self.img_enc_r = ImgEnc(args)
+            self.img_enc_l = ImgEnc(args)
+            self.img_enc_c = ImgEnc(args)
+            traj_enc_size = 3 * args.img_enc_size
+        elif args.view == 'right':
+            self.img_enc_r = ImgEnc(args)
+            traj_enc_size = args.img_enc_size
+        elif args.view == 'center':
+            self.img_enc_c = ImgEnc(args)
+            traj_enc_size = args.img_enc_size
+        elif args.view == 'left':
+            self.img_enc_l = ImgEnc(args)
+            traj_enc_size = args.img_enc_size
+        else:
+            raise NotImplementedError('Invalid view!')
+
+        if args.loss == 'rgr':
+            output_size = 1
+        elif args.loss == 'cls':
+            output_size = 2
+        else:
+            raise NotImplementedError('Invalid loss type!')
 
         # trajectory encoder
-        self.traj_encoder = nn.LSTM(
-            3 * args.img_enc_size, 
-            args.img_enc_size, 
-            batch_first=True, 
-            num_layers=args.num_layers)
+        if not args.meanpool_traj:
+            self.traj_encoder = nn.LSTM(
+                traj_enc_size, 
+                traj_enc_size, 
+                batch_first=True, 
+                num_layers=args.num_layers)
 
         # language encoder
         self.embedding = nn.Embedding(VOCAB_SIZE, args.lang_enc_size)
-        self.descr_encoder = nn.LSTM(args.lang_enc_size, args.lang_enc_size, batch_first=True, num_layers=args.num_layers)
+        if not args.meanpool_lang:
+            self.lang_encoder = nn.LSTM(
+                args.lang_enc_size, 
+                args.lang_enc_size, 
+                batch_first=True, 
+                num_layers=args.num_layers)
 
         # linear layers
-        self.linear1 = nn.Linear(args.img_enc_size + args.lang_enc_size, args.classifier_size)
-        self.linear2 = nn.Linear(args.classifier_size, 1)
+        self.linear1 = nn.Linear(traj_enc_size + args.lang_enc_size, args.classifier_size)
+        self.linear2 = nn.Linear(args.classifier_size, output_size)
 
 
     def forward(self, traj_r, traj_l, traj_c, lang, traj_len, lang_len):
-        traj_r_enc = self.img_enc_r(traj_r.view(-1, *traj_r.shape[-3:]))
-        traj_r_enc = traj_r_enc.view(*traj_r.shape[:2], -1)
-        traj_l_enc = self.img_enc_l(traj_l.view(-1, *traj_l.shape[-3:]))
-        traj_l_enc = traj_l_enc.view(*traj_l.shape[:2], -1)
-        traj_c_enc = self.img_enc_c(traj_c.view(-1, *traj_c.shape[-3:]))
-        traj_c_enc = traj_c_enc.view(*traj_c.shape[:2], -1)
+        if self.args.view == 'all':
+            traj_r_enc = self.img_enc_r(traj_r.view(-1, *traj_r.shape[-3:]))
+            traj_r_enc = traj_r_enc.view(*traj_r.shape[:2], -1)
+            traj_l_enc = self.img_enc_l(traj_l.view(-1, *traj_l.shape[-3:]))
+            traj_l_enc = traj_l_enc.view(*traj_l.shape[:2], -1)
+            traj_c_enc = self.img_enc_c(traj_c.view(-1, *traj_c.shape[-3:]))
+            traj_c_enc = traj_c_enc.view(*traj_c.shape[:2], -1)
+            traj_enc = torch.cat([traj_r_enc, traj_l_enc, traj_c_enc], dim=-1)
 
-        traj_enc = torch.cat([traj_r_enc, traj_l_enc, traj_c_enc], dim=-1)
-        _, traj_enc = lstm_helper(traj_enc, traj_len, self.traj_encoder)
+        elif self.args.view == 'right':
+            traj_enc = self.img_enc_r(traj_r.view(-1, *traj_r.shape[-3:]))
+            traj_enc = traj_enc.view(*traj_r.shape[:2], -1)
+
+        elif self.args.view == 'center':
+            traj_enc = self.img_enc_c(traj_c.view(-1, *traj_c.shape[-3:]))
+            traj_enc = traj_enc.view(*traj_c.shape[:2], -1)
+
+        elif self.args.view == 'left':
+            traj_enc = self.img_enc_l(traj_l.view(-1, *traj_l.shape[-3:]))
+            traj_enc = traj_enc.view(*traj_l.shape[:2], -1)
+
+        else:
+            raise NotImplementedError('Invalid view!')
+
+        if self.args.meanpool_traj:
+            traj_len = traj_len.long()
+            traj_enc = torch.stack(
+                [torch.mean(traj_enc[i][:traj_len[i]], dim=0) for i in range(len(traj_enc))])
+        else:
+            _, traj_enc = lstm_helper(traj_enc, traj_len, self.traj_encoder)
 
         lang_emb = self.embedding(lang)
-        _, lang_enc = lstm_helper(lang_emb, lang_len, self.descr_encoder)
+        if self.args.meanpool_lang:
+            lang_len = lang_len.long()
+            lang_enc = torch.stack(
+                [torch.mean(lang_emb[i][:lang_len[i]], dim=0) for i in range(len(lang_emb))])
+        else:
+            _, lang_enc = lstm_helper(lang_emb, lang_len, self.lang_encoder)
 
         traj_lang = torch.cat([traj_enc, lang_enc], dim=-1)
         pred = F.relu(self.linear1(traj_lang))
@@ -126,51 +178,6 @@ class Predict:
             lr=lr, 
             weight_decay=0.)
         self.n_updates = n_updates
-
-    def predict_scores(self, traj, lang, traj_len, lang_len):
-        self.model.eval()
-        scores = np.zeros((len(traj), len(traj)))
-        for start in range(len(traj)):
-            for end in range(start+1, len(traj)):
-                traj_sampled = traj[start:end, :, :, :]
-                traj_sampled = np.array(traj_sampled)
-                traj_sampled = torch.from_numpy(traj_sampled)
-                traj_sampled = traj_sampled.cuda().float()
-                traj_sampled = torch.transpose(traj_sampled, 2, 3)
-                traj_sampled = torch.transpose(traj_sampled, 1, 2)
-                lang = lang.cuda().long()
-                traj_len = torch.Tensor([end-start])
-                lang_len = torch.Tensor(lang_len)
-                prob = self.model(torch.unsqueeze(traj_sampled, 0), torch.unsqueeze(lang, 0), traj_len, lang_len)
-                prob_norm = torch.softmax(prob, dim=-1).data.cpu().numpy()
-                scores[start, end] = (prob_norm[0, 1] - prob_norm[0, 0])
-        return scores
-
-    def predict_test(self, traj_r, traj_l, traj_c, lang, traj_len, lang_len):
-        self.model.train()
-        traj_r_sampled = traj_r
-        traj_r_sampled = np.array(traj_r_sampled)
-        traj_r_sampled = torch.from_numpy(traj_r_sampled)
-        traj_r_sampled = traj_r_sampled.cuda().float()
-        traj_r_sampled = torch.transpose(traj_r_sampled, 3, 4)
-        traj_r_sampled = torch.transpose(traj_r_sampled, 2, 3)
-        traj_l_sampled = traj_l
-        traj_l_sampled = np.array(traj_l_sampled)
-        traj_l_sampled = torch.from_numpy(traj_l_sampled)
-        traj_l_sampled = traj_l_sampled.cuda().float()
-        traj_l_sampled = torch.transpose(traj_l_sampled, 3, 4)
-        traj_l_sampled = torch.transpose(traj_l_sampled, 2, 3)
-        traj_c_sampled = traj_c
-        traj_c_sampled = np.array(traj_c_sampled)
-        traj_c_sampled = torch.from_numpy(traj_c_sampled)
-        traj_c_sampled = traj_c_sampled.cuda().float()
-        traj_c_sampled = torch.transpose(traj_c_sampled, 3, 4)
-        traj_c_sampled = torch.transpose(traj_c_sampled, 2, 3)
-        lang = lang.cuda().long()
-        traj_len = torch.Tensor(traj_len)
-        lang_len = torch.Tensor(lang_len)
-        prob, lang_emb = self.model(traj_r_sampled, traj_l_sampled, traj_c_sampled, lang, traj_len, lang_len)
-        return prob, lang_emb
 
     def predict(self, traj_r, traj_l, traj_c, lang):
         self.model.eval()
@@ -249,7 +256,7 @@ class Train:
             lr=self.args.lr)
 
     def run_batch(self, traj_r, traj_l, traj_c, lang, traj_len, 
-        lang_len, labels, weights, is_train):
+        lang_len, classes, weights, is_train):
         if is_train:
             self.model.train()
             self.optimizer.zero_grad()
@@ -260,41 +267,55 @@ class Train:
         traj_l = traj_l.cuda().float()
         traj_c = traj_c.cuda().float()
         lang = lang.cuda().long()
-        labels = torch.Tensor(labels).cuda().long()
+        classes = torch.Tensor(classes).cuda().long()
         weights = weights.cuda().float()
         pred, _ = self.model(traj_r, traj_l, traj_c, lang, traj_len, lang_len)
-        prob = torch.tanh(pred[:, 0])
-        loss = torch.nn.MSELoss()(prob, weights*labels)
-        pred = prob
-        
+        if self.args.loss == 'rgr':
+            pred = torch.tanh(pred[:, 0])
+            labels = weights*classes
+            loss = torch.nn.MSELoss()(pred, labels)
+        elif self.args.loss == 'cls':
+            labels = (classes + 1) / 2
+            loss = torch.nn.CrossEntropyLoss()(pred, labels)
+            pred = torch.argmax(pred, dim=-1)
+        else:
+            raise NotImplementedError('Invalid loss type!')
+
         if is_train:
             loss.backward()
             self.optimizer.step()
 
-        return pred, loss.item()
+        return pred, labels, loss.item()
 
     def run_epoch(self, data_loader, is_train):
         pred_all = []
         labels_all = []
         loss_all = []
         for frames_r, frames_l, frames_c, descr, descr_enc, \
-            traj_len, descr_len, labels, _, _, weights in data_loader:
-            pred, loss = self.run_batch(
+            traj_len, descr_len, classes, _, _, weights in data_loader:
+            pred, labels, loss = self.run_batch(
                 frames_r, frames_l, frames_c, descr_enc, traj_len, 
-                descr_len, labels, weights, is_train)
+                descr_len, classes, weights, is_train)
             pred_all += pred.tolist()
-            labels_all += (weights * labels).tolist()
+            labels_all += labels.tolist()
             loss_all.append(loss)
-        t, p = spearmanr(pred_all, labels_all)
-        return np.round(np.mean(loss_all), 2), t, None
+        if self.args.loss == 'rgr':
+            score, _ = spearmanr(pred_all, labels_all)
+        elif self.args.loss == 'cls':
+            correct = [1 if p==l else 0 for (p, l) in zip(pred_all, labels_all)]
+            score = sum(correct) / len(correct)
+        else:
+            raise NotImplementedError('Invalid loss type!')
+
+        return np.mean(loss_all), score
 
     def train_model(self):
         best_val_acc = 0.
         epoch = 1
         while True:
-            valid_loss, valid_acc, valid_cm = self.run_epoch(
+            valid_loss, valid_acc = self.run_epoch(
                 self.valid_data_loader, is_train=False)
-            train_loss, train_acc, train_cm = self.run_epoch(
+            train_loss, train_acc = self.run_epoch(
                 self.train_data_loader, is_train=True)
             print('Epoch: {}\tTL: {:.2f}\tTA: {:.2f}\tVL: {:.2f}\tVA: {:.2f}'.format(
                 epoch, train_loss, 100. * train_acc, valid_loss, 100. * valid_acc))
@@ -314,8 +335,12 @@ class Train:
             epoch += 1
 
 def main(args):
-    train_data = Data(mode='train')
-    valid_data = Data(mode='valid')
+    if args.debug:
+        repeat = 1
+    else:
+        repeat = 10
+    train_data = Data(args, mode='train', repeat=repeat)
+    valid_data = Data(args, mode='valid', repeat=repeat)
     print(len(train_data))
     print(len(valid_data))
     train_data_loader = DataLoader(
@@ -336,6 +361,11 @@ def get_args():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--batch-size', type=int, default=16)
+    parser.add_argument('--loss', default='rgr', help='rgr | cls')
+    parser.add_argument('--view', default='all', help='all | left | center | right')
+    parser.add_argument('--meanpool-lang', action='store_true')
+    parser.add_argument('--meanpool-traj', action='store_true')
+    parser.add_argument('--last-frame', action='store_true')
     parser.add_argument('--n-channels', type=int, default=256)
     parser.add_argument('--img-enc-size', type=int, default=512)
     parser.add_argument('--lang-enc-size', type=int, default=512)
@@ -345,6 +375,7 @@ def get_args():
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--save-path', default=None)
     parser.add_argument('--logdir', default=None)
+    parser.add_argument('--debug', action='store_true')
     args = parser.parse_args()
     return args
 

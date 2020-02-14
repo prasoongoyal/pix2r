@@ -17,6 +17,9 @@ TRAIN_VIDEOS = list(range(80))
 VALID_VIDEOS = list(range(80, 100))
 TEST_VIDEOS = [50, 92, 95]
 
+POS_LABEL = 1
+NEG_LABEL = -1
+
 class PadBatch:
     def __init__(self):
         pass
@@ -39,7 +42,8 @@ class PadBatch:
                 labels_batch, obj_batch, env_batch, weight_batch
 
 class Data(Dataset):
-    def __init__(self, mode, repeat=10):
+    def __init__(self, args, mode, repeat=10):
+        self.args = args
         self.vocab = pickle.load(open('{}/vocab_train.pkl'.format(DATA_DIR), 'rb'))
         self.descriptions = self.load_descriptions(mode)
         self.video_ids = self.get_video_ids(mode)
@@ -102,22 +106,29 @@ class Data(Dataset):
 
         n_frames = np.random.randint(1, (n_frames_total+1))
         weight = (n_frames / n_frames_total)
-        frames_r = frames_r[:n_frames]
-        frames_l = frames_l[:n_frames]
-        frames_c = frames_c[:n_frames]
 
-        while True:
-            selected = np.random.random(n_frames) > 0.9
-            if np.sum(selected) > 0:
-                break
-        frames_r = frames_r[selected]
-        frames_l = frames_l[selected]
-        frames_c = frames_c[selected]
-            
+        if self.args.last_frame:
+            frames_r = torch.unsqueeze(frames_r[-1], 0)
+            frames_l = torch.unsqueeze(frames_l[-1], 0)
+            frames_c = torch.unsqueeze(frames_c[-1], 0)
+
+        else:
+            frames_r = frames_r[:n_frames]
+            frames_l = frames_l[:n_frames]
+            frames_c = frames_c[:n_frames]
+
+            while True:
+                selected = np.random.random(n_frames) > 0.9
+                if np.sum(selected) > 0:
+                    break
+            frames_r = frames_r[selected]
+            frames_l = frames_l[selected]
+            frames_c = frames_c[selected]
+
         return frames_r, frames_l, frames_c, n_frames_total, weight
 
     def get_descr(self, obj, label, env_objects):
-        if label == 1:
+        if label == POS_LABEL:
             t = np.random.randint(0, len(self.descriptions[obj]))
             descr, descr_enc = self.descriptions[obj][t]
         else:
@@ -133,10 +144,10 @@ class Data(Dataset):
 
     def __getitem__(self, index):
         if index >= len(self) // 2:
-            label = 0
+            label = NEG_LABEL
             index -= len(self) // 2
         else:
-            label = 1
+            label = POS_LABEL
 
         obj = index // (self.repeat * self.N_ENV)
         env = self.video_ids[index % self.N_ENV]
@@ -144,6 +155,5 @@ class Data(Dataset):
 
         frames_r, frames_l, frames_c, n_frames_total, weight = self.load_frames(obj, env)
         descr, descr_enc = self.get_descr(obj, label, env_objects)
-        label = 2*label - 1
         return frames_r, frames_l, frames_c, descr, descr_enc, len(frames_r), len(descr_enc), label, obj, env, weight
 
