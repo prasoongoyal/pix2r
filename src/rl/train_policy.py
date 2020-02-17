@@ -35,10 +35,7 @@ class LangModule:
     def __init__(self, args):
         self.lang_network = Predict(args.model_file, lr=0, n_updates=0)
         self.descr = self.load_description(args)
-        self.traj_r = []
-        self.traj_l = []
-        self.traj_c = []
-        self.potentials = []
+        self.reset()
 
     def encode_description(self, vocab, descr):
         result = []
@@ -75,9 +72,15 @@ class LangModule:
         self.potentials.append(prob)
         return self.potentials
 
+    def reset(self):
+        self.traj_r = []
+        self.traj_l = []
+        self.traj_c = []
+        self.potentials = []
+
 def main(args):
     ############## Hyperparameters ##############
-    log_interval = 100           # print avg reward in the interval
+    log_interval = 1000           # print avg reward in the interval
     save_interval = 500
     max_total_timesteps = args.max_total_timesteps
     if max_total_timesteps == 0:
@@ -124,6 +127,7 @@ def main(args):
         state = env.reset()
         if args.reward_type == 'lang':
             img_left, img_center, img_right, _ = env.get_frame()
+            lang_module.reset()
             lang_module.update(img_left, img_center, img_right)
         # for t in range(args.max_timesteps):
         while True:
@@ -143,7 +147,6 @@ def main(args):
             
             # update if its time
             if time_step % update_timestep == 0:
-                print(action)
                 ppo.update(memory)
                 memory.clear_memory()
                 total_steps += time_step
@@ -168,13 +171,10 @@ def main(args):
                 torch.save(ppo.policy.state_dict(), args.save_path)
                 break
 
-        if args.model_file and i_episode % save_interval == 0:
-            torch.save(ppo.policy.state_dict(), args.model_file)
-        
 def get_args():
     import argparse
     parser = argparse.ArgumentParser('Train PPO policy')
-    parser.add_argument('--random-init', type=int, help='Environment seed')
+    parser.add_argument('--random-seed', type=int, help='Environment seed')
     parser.add_argument('--reward-type', help='sparse | dense | lang')
     parser.add_argument('--model-file', help='')
     parser.add_argument('--save-path', help='')
@@ -193,9 +193,10 @@ def get_args():
 if __name__ == '__main__':
     enable_gpu_rendering()
     args = get_args()
-    torch.manual_seed(17)
-    np.random.seed(17)
+    torch.manual_seed(args.random_seed)
+    np.random.seed(args.random_seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+    print(args)
     main(args)
     

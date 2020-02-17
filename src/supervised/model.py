@@ -348,13 +348,13 @@ def main(args):
         batch_size=args.batch_size,
         shuffle=True,
         collate_fn=PadBatch(),
-        num_workers=16)
+        num_workers=8)
     valid_data_loader = DataLoader(
         dataset=valid_data,
         batch_size=args.batch_size,
         shuffle=True,
         collate_fn=PadBatch(),
-        num_workers=16)
+        num_workers=8)
     Train(args, train_data_loader, valid_data_loader).train_model()
 
 def get_args():
@@ -366,10 +366,7 @@ def get_args():
     parser.add_argument('--meanpool-lang', action='store_true')
     parser.add_argument('--meanpool-traj', action='store_true')
     parser.add_argument('--last-frame', action='store_true')
-    parser.add_argument('--n-channels', type=int, default=256)
-    parser.add_argument('--img-enc-size', type=int, default=512)
-    parser.add_argument('--lang-enc-size', type=int, default=512)
-    parser.add_argument('--classifier-size', type=int, default=1024)
+    parser.add_argument('--random-seed', type=int, default=0)
     parser.add_argument('--num-layers', type=int, default=2)
     parser.add_argument('--max-epochs', type=int, default=0)
     parser.add_argument('--lr', type=float, default=1e-4)
@@ -381,8 +378,14 @@ def get_args():
 
 if __name__ == '__main__':
     args = get_args()
-    torch.manual_seed(17)
-    np.random.seed(17)
+    torch.manual_seed(args.random_seed)
+    np.random.seed(args.random_seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+    hyperparam_values = [64, 96, 128, 192, 256, 384, 512, 768, 1024]
+    args.n_channels = hyperparam_values[np.random.randint(len(hyperparam_values))]
+    args.img_enc_size = hyperparam_values[np.random.randint(len(hyperparam_values))]
+    args.lang_enc_size = hyperparam_values[np.random.randint(len(hyperparam_values))]
+    args.classifier_size = hyperparam_values[np.random.randint(len(hyperparam_values))]
+    print(args)
     main(args)
