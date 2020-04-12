@@ -208,7 +208,15 @@ class Predict:
                 torch.unsqueeze(traj_l_sampled, 0) / 255.,
                 torch.unsqueeze(traj_c_sampled, 0) / 255., 
                 torch.unsqueeze(lang, 0), traj_len, lang_len)
-        return prob
+        if self.args.loss == 'cls':
+            prob = torch.softmax(prob, dim=-1).data.cpu().numpy()[0]
+            return prob[1] - prob[0]
+        elif self.args.loss == 'rgr':
+            prob = torch.tanh(prob).data.cpu().numpy()[0][0]
+            return prob
+        else:
+            raise NotImplementedError('Invalid loss type!')
+        # return prob
 
     def update(self, traj_r, traj_l, traj_c, lang, label):
         self.model.train()
@@ -291,13 +299,15 @@ class Train:
         pred_all = []
         labels_all = []
         loss_all = []
-        for frames_r, frames_l, frames_c, descr, descr_enc, \
+        traj_len_all = []
+        for _, frames_r, frames_l, frames_c, descr, descr_enc, \
             traj_len, descr_len, classes, _, _, weights in data_loader:
             pred, labels, loss = self.run_batch(
                 frames_r, frames_l, frames_c, descr_enc, traj_len, 
                 descr_len, classes, weights, is_train)
             pred_all += pred.tolist()
             labels_all += labels.tolist()
+            traj_len_all += traj_len.tolist()
             loss_all.append(loss)
         if self.args.loss == 'rgr':
             score, _ = spearmanr(pred_all, labels_all)
@@ -306,7 +316,6 @@ class Train:
             score = sum(correct) / len(correct)
         else:
             raise NotImplementedError('Invalid loss type!')
-
         return np.mean(loss_all), score
 
     def train_model(self):
@@ -348,13 +357,15 @@ def main(args):
         batch_size=args.batch_size,
         shuffle=True,
         collate_fn=PadBatch(),
-        num_workers=8)
+        worker_init_fn=lambda _: np.random.seed(int(torch.initial_seed())%(2**32-1)),
+        num_workers=args.num_workers)
     valid_data_loader = DataLoader(
         dataset=valid_data,
         batch_size=args.batch_size,
         shuffle=True,
         collate_fn=PadBatch(),
-        num_workers=8)
+        worker_init_fn=lambda _: np.random.seed(int(torch.initial_seed())%(2**32-1)),
+        num_workers=args.num_workers)
     Train(args, train_data_loader, valid_data_loader).train_model()
 
 def get_args():
@@ -370,6 +381,7 @@ def get_args():
     parser.add_argument('--num-layers', type=int, default=2)
     parser.add_argument('--max-epochs', type=int, default=0)
     parser.add_argument('--lr', type=float, default=1e-4)
+    parser.add_argument('--num-workers', type=int, default=6)
     parser.add_argument('--save-path', default=None)
     parser.add_argument('--logdir', default=None)
     parser.add_argument('--debug', action='store_true')
@@ -382,7 +394,7 @@ if __name__ == '__main__':
     np.random.seed(args.random_seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    hyperparam_values = [64, 96, 128, 192, 256, 384, 512, 768, 1024]
+    hyperparam_values = [64, 96, 128, 192, 256, 384, 512]
     args.n_channels = hyperparam_values[np.random.randint(len(hyperparam_values))]
     args.img_enc_size = hyperparam_values[np.random.randint(len(hyperparam_values))]
     args.lang_enc_size = hyperparam_values[np.random.randint(len(hyperparam_values))]

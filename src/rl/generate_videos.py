@@ -62,7 +62,7 @@ def main(args):
     log_interval = 1           # print avg reward in the interval
     save_interval = 500
     max_episodes = 5000        # max training episodes
-    max_timesteps = 500
+    max_timesteps = 150
     
     update_timestep = max_timesteps      # update policy every n timesteps
     action_std = 0.5            # constant std for action distribution (Multivariate Normal)
@@ -142,7 +142,7 @@ def main(args):
                 avg_length = int(avg_length/log_interval)
                 running_reward = int((running_reward/log_interval))
                 
-                print('Trial: {} \t Episode: {} \t Length: {} \t Reward: {}'.format(trial, i_episode, avg_length, running_reward))
+                print('Trial: {} \t Episode: {} \t Length: {} \t Reward: {} \t Success: {}'.format(trial, i_episode, avg_length, running_reward, success))
                 running_reward = 0
                 avg_length = 0
 

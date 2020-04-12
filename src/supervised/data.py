@@ -8,6 +8,7 @@ from PIL import Image
 import numpy as np
 from torch.nn.utils.rnn import pad_sequence
 import pickle
+import random
 
 DATA_DIR = '../../data/'
 FRAMES_DIR = '../../data/processed-frames/'
@@ -25,7 +26,7 @@ class PadBatch:
         pass
 
     def __call__(self, batch):
-        traj_right_batch, traj_left_batch, traj_center_batch, \
+        index_batch, traj_right_batch, traj_left_batch, traj_center_batch, \
         lang_batch, lang_enc_batch, traj_len_batch, lang_len_batch, labels_batch, obj_batch, \
                 env_batch, weight_batch = zip(*batch)
         traj_right_batch = pad_sequence(traj_right_batch, batch_first=True)
@@ -37,7 +38,7 @@ class PadBatch:
         lang_len_batch = torch.Tensor(lang_len_batch)
         weight_batch = torch.Tensor(weight_batch)
         labels_batch = torch.Tensor(labels_batch)
-        return traj_right_batch, traj_left_batch, traj_center_batch, \
+        return index_batch, traj_right_batch, traj_left_batch, traj_center_batch, \
                 lang_batch, lang_enc_batch, traj_len_batch, lang_len_batch, \
                 labels_batch, obj_batch, env_batch, weight_batch
 
@@ -105,6 +106,7 @@ class Data(Dataset):
         n_frames_total = len(frames_r)
 
         n_frames = np.random.randint(1, (n_frames_total+1))
+        # n_frames = random.randrange(1, n_frames_total)
         weight = (n_frames / n_frames_total)
 
         if self.args.last_frame:
@@ -119,6 +121,7 @@ class Data(Dataset):
 
             while True:
                 selected = np.random.random(n_frames) > 0.9
+                # selected = random.random
                 if np.sum(selected) > 0:
                     break
             frames_r = frames_r[selected]
@@ -143,6 +146,7 @@ class Data(Dataset):
         return descr, descr_enc
 
     def __getitem__(self, index):
+        index_orig = index
         if index >= len(self) // 2:
             label = NEG_LABEL
             index -= len(self) // 2
@@ -155,5 +159,5 @@ class Data(Dataset):
 
         frames_r, frames_l, frames_c, n_frames_total, weight = self.load_frames(obj, env)
         descr, descr_enc = self.get_descr(obj, label, env_objects)
-        return frames_r, frames_l, frames_c, descr, descr_enc, len(frames_r), len(descr_enc), label, obj, env, weight
+        return index_orig, frames_r, frames_l, frames_c, descr, descr_enc, len(frames_r), len(descr_enc), label, obj, env, weight
 
