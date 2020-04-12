@@ -902,7 +902,7 @@ class SawyerRandomEnv(SawyerXYZEnv):
             reward = reachRew + placeRew
             success = (placingDist <= 0.07)
 
-        if self.reward_type == 'sparse':
+        if self.reward_type == 'sparse' or self.reward_type == 'lang':
             reward = 1 if success else 0
         return reward, success
 
