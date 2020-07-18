@@ -6,7 +6,6 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import torch.optim as optim
 import numpy as np
-from sklearn.metrics import confusion_matrix
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from scipy.stats import spearmanr
 
@@ -231,8 +230,15 @@ class Predict:
             frame_c = self.model.img_enc_c(torch.unsqueeze(frame_c, 0) / 255.)
         return torch.squeeze(frame_r).cpu(), torch.squeeze(frame_l).cpu(), torch.squeeze(frame_c).cpu()
 
-    def predict(self, traj_r, traj_l, traj_c, lang):
+    def predict(self, traj, lang):
         with torch.no_grad():
+            traj_sampled = traj[::-1][::10][::-1]
+            traj_sampled = np.array(traj_sampled)
+            traj_sampled = torch.from_numpy(traj_sampled)
+            traj_sampled = traj_sampled.cuda().float()
+            traj_sampled = torch.transpose(traj_sampled, 2, 3)
+            traj_sampled = torch.transpose(traj_sampled, 1, 2)
+            '''
             traj_r_sampled = traj_r[::-1][::10][::-1]
             traj_r_sampled = np.array(traj_r_sampled)
             traj_r_sampled = torch.from_numpy(traj_r_sampled)
@@ -251,13 +257,12 @@ class Predict:
             traj_c_sampled = traj_c_sampled.cuda().float()
             traj_c_sampled = torch.transpose(traj_c_sampled, 2, 3)
             traj_c_sampled = torch.transpose(traj_c_sampled, 1, 2)
+            '''
             lang = lang.cuda().long()
-            traj_len = torch.Tensor([len(traj_r_sampled)])
+            traj_len = torch.Tensor([len(traj_sampled)])
             lang_len = torch.Tensor([len(lang)])
             prob, _ = self.model(
-                torch.unsqueeze(traj_r_sampled, 0) / 255., 
-                torch.unsqueeze(traj_l_sampled, 0) / 255.,
-                torch.unsqueeze(traj_c_sampled, 0) / 255., 
+                torch.unsqueeze(traj_sampled, 0) / 255., 
                 torch.unsqueeze(lang, 0), traj_len, lang_len)
         if self.args.loss == 'cls':
             prob = torch.softmax(prob, dim=-1).data.cpu().numpy()[0]
@@ -450,7 +455,7 @@ def main(args):
     else:
         repeat = 10
     train_data = Data(args, mode='train', repeat=repeat)
-    valid_data = Data(args, mode='valid_seen', repeat=repeat)
+    valid_data = Data(args, mode='valid_unseen', repeat=repeat)
     print(len(train_data))
     print(len(valid_data))
     train_data_loader = DataLoader(
